@@ -1,0 +1,215 @@
+import os
+import numpy as np
+import cv2
+import time
+import logging
+from PIL import Image, ImageDraw
+from skimage.transform import resize as sk_resize
+
+# Suppress TF noise
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+logger = logging.getLogger(__name__)
+
+_lane_model    = None
+_pothole_model = None
+
+MODEL_INPUT_SIZE = (160, 80)
+ORIGINAL_SIZE    = (1280, 720)
+
+
+class LaneState:
+    def __init__(self):
+        self.recent_fit = []
+        self.avg_fit    = []
+
+_lane_state = LaneState()
+
+
+def _load_lane_model(model_path):
+    """Load .h5 lane model using tf_keras (compatible with TF 2.16+ / Keras 3.x)."""
+    try:
+        import tf_keras
+        model = tf_keras.models.load_model(model_path, compile=False)
+        logger.info("✅ Lane CNN model loaded via tf_keras.")
+        return model
+    except Exception as e:
+        logger.error(f"❌ Lane model load failed: {e}")
+        return None
+
+
+def load_models():
+    global _lane_model, _pothole_model
+    from django.conf import settings
+
+    _lane_model = _load_lane_model(str(settings.LANE_MODEL_PATH))
+
+    try:
+        from ultralytics import YOLO
+        _pothole_model = YOLO(str(settings.POTHOLE_MODEL_PATH))
+        logger.info("✅ Pothole YOLOv8 model loaded.")
+    except Exception as e:
+        logger.error(f"❌ Pothole model failed: {e}")
+
+
+def get_lane_model():
+    global _lane_model
+    if _lane_model is None:
+        from django.conf import settings
+        _lane_model = _load_lane_model(str(settings.LANE_MODEL_PATH))
+    return _lane_model
+
+
+def get_pothole_model():
+    global _pothole_model
+    if _pothole_model is None:
+        from django.conf import settings
+        try:
+            from ultralytics import YOLO
+            _pothole_model = YOLO(str(settings.POTHOLE_MODEL_PATH))
+            logger.info("✅ Pothole YOLOv8 model lazy-loaded.")
+        except Exception as e:
+            logger.error(f"❌ Pothole model lazy-load failed: {e}")
+    return _pothole_model
+
+
+# ── Lane Detection ────────────────────────────────────────────────
+
+def _process_lane_frame(frame):
+    model = get_lane_model()
+    if model is None:
+        raise RuntimeError("Lane model not loaded.")
+
+    small = sk_resize(frame, (MODEL_INPUT_SIZE[1], MODEL_INPUT_SIZE[0], 3),
+                      preserve_range=True, anti_aliasing=True).astype(np.uint8)
+    small = small[None, :, :, :]
+    prediction = model.predict(small, verbose=0)[0] * 255
+
+    _lane_state.recent_fit.append(prediction)
+    if len(_lane_state.recent_fit) > 5:
+        _lane_state.recent_fit = _lane_state.recent_fit[1:]
+
+    _lane_state.avg_fit = np.mean(np.array(_lane_state.recent_fit), axis=0)
+    blanks     = np.zeros_like(_lane_state.avg_fit).astype(np.uint8)
+    lane_drawn = np.dstack((blanks, _lane_state.avg_fit.astype(np.uint8), blanks))
+    lane_image = sk_resize(lane_drawn, frame.shape, preserve_range=True,
+                           anti_aliasing=True).astype(np.uint8)
+    return cv2.addWeighted(frame, 1, lane_image, 1, 0)
+
+
+def detect_lanes_video(input_path, output_path):
+    _lane_state.recent_fit = []
+    _lane_state.avg_fit    = []
+
+    start  = time.time()
+    cap    = cv2.VideoCapture(input_path)
+    if not cap.isOpened():
+        raise ValueError(f"Cannot open video: {input_path}")
+
+    fps    = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    total  = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out    = cv2.VideoWriter(output_path, fourcc, fps, ORIGINAL_SIZE)
+
+    processed = 0
+    try:
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame  = cv2.resize(frame, ORIGINAL_SIZE)
+            result = _process_lane_frame(frame)
+            out.write(result)
+            processed += 1
+    finally:
+        cap.release()
+        out.release()
+
+    return {
+        'frames_processed':   processed,
+        'total_frames':       total,
+        'processing_time_ms': (time.time() - start) * 1000,
+        'fps':                fps,
+    }
+
+
+# ── Pothole Detection ─────────────────────────────────────────────
+
+def detect_potholes_image(input_path, output_path):
+    model = get_pothole_model()
+    if model is None:
+        raise RuntimeError("Pothole model not loaded.")
+
+    start  = time.time()
+    img    = Image.open(input_path).convert("RGB")
+    pred   = model(img)
+    draw   = ImageDraw.Draw(img)
+    boxes  = pred[0].boxes.xyxy.tolist()
+    scores = pred[0].boxes.conf.tolist() if pred[0].boxes.conf is not None else []
+
+    detections = []
+    for i, box in enumerate(boxes):
+        x1, y1, x2, y2 = map(int, box)
+        draw.rectangle((x1, y1, x2, y2), outline="red", width=3)
+        detections.append({
+            'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
+            'confidence': round(scores[i], 3) if i < len(scores) else None,
+        })
+    img.save(output_path)
+
+    return {
+        'pothole_count':      len(boxes),
+        'pothole_detected':   len(boxes) > 0,
+        'detections':         detections,
+        'processing_time_ms': (time.time() - start) * 1000,
+    }
+
+
+def detect_potholes_video(input_path, output_path):
+    model = get_pothole_model()
+    if model is None:
+        raise RuntimeError("Pothole model not loaded.")
+
+    start  = time.time()
+    cap    = cv2.VideoCapture(input_path)
+    if not cap.isOpened():
+        raise ValueError(f"Cannot open video: {input_path}")
+
+    fps    = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    w      = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h      = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out    = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
+
+    total_potholes = 0
+    pothole_found  = False
+    processed      = 0
+
+    try:
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            img_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            pred    = model(img_pil)
+            draw    = ImageDraw.Draw(img_pil)
+            boxes   = pred[0].boxes.xyxy.tolist()
+            for box in boxes:
+                x1, y1, x2, y2 = map(int, box)
+                draw.rectangle((x1, y1, x2, y2), outline="red", width=3)
+            if boxes:
+                pothole_found   = True
+                total_potholes += len(boxes)
+            out.write(cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR))
+            processed += 1
+    finally:
+        cap.release()
+        out.release()
+
+    return {
+        'pothole_count':      total_potholes,
+        'pothole_detected':   pothole_found,
+        'frames_processed':   processed,
+        'processing_time_ms': (time.time() - start) * 1000,
+    }
