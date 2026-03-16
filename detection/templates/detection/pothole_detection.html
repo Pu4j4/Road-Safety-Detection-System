@@ -1,0 +1,174 @@
+{% extends "detection/base.html" %}
+{% block title %}Pothole Detection — Road Safety Detection System{% endblock %}
+{% block page_title %}Pothole Detection{% endblock %}
+{% block breadcrumb %}/ pothole detection{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+    <div>
+        <div class="card" style="margin-bottom:16px">
+            <div class="card-title">Upload File</div>
+            <div class="upload-zone" id="uploadZone">
+                <input type="file" id="fileInput" accept="image/jpeg,image/png,video/mp4,video/avi">
+                <div class="upload-icon">📁</div>
+                <h3>Drop file here or click to browse</h3>
+                <p>JPG, PNG (images) · MP4, AVI (videos)</p>
+            </div>
+            <div id="fileInfo" style="display:none;margin-top:12px;padding:12px;background:var(--surface2);border-radius:8px;font-size:13px;font-family:var(--mono)">
+                <span id="fileName"></span>
+                <span id="fileSize" style="color:var(--text-muted);margin-left:8px"></span>
+            </div>
+            <div style="margin-top:16px">
+                <button class="btn btn-primary" id="detectBtn" disabled onclick="runDetection()">
+                    🔍 Detect Potholes
+                </button>
+            </div>
+        </div>
+        <div id="progressCard" class="card" style="display:none">
+            <div class="card-title">Processing</div>
+            <div style="font-size:14px;color:var(--text-dim)">Analyzing with YOLOv8...</div>
+            <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        </div>
+    </div>
+
+    <div>
+        <div class="card result-panel" id="resultPanel">
+            <div class="card-title">Detection Result</div>
+            <div id="resultContent"></div>
+        </div>
+        <div id="emptyResult" class="card" style="text-align:center;padding:40px;color:var(--text-muted)">
+            <div style="font-size:48px;margin-bottom:12px">🕳️</div>
+            <div style="font-weight:700;margin-bottom:6px">Results Appear Here</div>
+            <div style="font-size:13px">Upload an image or video and run detection</div>
+        </div>
+    </div>
+</div>
+
+<div class="card" style="margin-top:24px">
+    <div class="card-title">How It Works</div>
+    <div class="grid-3">
+        <div style="text-align:center;padding:16px">
+            <div style="font-size:32px;margin-bottom:8px">📤</div>
+            <div style="font-weight:700;margin-bottom:4px">1. Upload</div>
+            <div style="font-size:13px;color:var(--text-muted)">Upload a road image or video</div>
+        </div>
+        <div style="text-align:center;padding:16px">
+            <div style="font-size:32px;margin-bottom:8px">🤖</div>
+            <div style="font-weight:700;margin-bottom:4px">2. YOLOv8 Analysis</div>
+            <div style="font-size:13px;color:var(--text-muted)">AI detects and marks potholes with bounding boxes</div>
+        </div>
+        <div style="text-align:center;padding:16px">
+            <div style="font-size:32px;margin-bottom:8px">📨</div>
+            <div style="font-weight:700;margin-bottom:4px">3. Alert Municipality</div>
+            <div style="font-size:13px;color:var(--text-muted)">Send SMS via Twilio if potholes found</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const fileInput = document.getElementById('fileInput');
+    const detectBtn = document.getElementById('detectBtn');
+    const uploadZone = document.getElementById('uploadZone');
+    let selectedFile = null, currentRecordId = null;
+
+    uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+    uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+    uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('dragover'); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); });
+    fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+
+    function handleFile(file) {
+        selectedFile = file;
+        detectBtn.disabled = false;
+        document.getElementById('fileInfo').style.display = 'block';
+        document.getElementById('fileName').textContent = '📄 ' + file.name;
+        document.getElementById('fileSize').textContent = (file.size / 1024 / 1024).toFixed(2) + ' MB';
+    }
+
+    async function runDetection() {
+        if (!selectedFile) return;
+        detectBtn.disabled = true;
+        document.getElementById('emptyResult').style.display = 'none';
+        document.getElementById('progressCard').style.display = 'block';
+        animateProgress();
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+        try {
+            const res  = await fetch('/api/detect/pothole/', { method: 'POST', body: formData });
+            const data = await res.json();
+            stopProgress();
+            document.getElementById('progressCard').style.display = 'none';
+            if (data.success) { currentRecordId = data.data.id; showResult(data); }
+            else showError(data.error || JSON.stringify(data));
+        } catch(e) {
+            stopProgress();
+            document.getElementById('progressCard').style.display = 'none';
+            showError('Network error: ' + e.message);
+        }
+        detectBtn.disabled = false;
+    }
+
+    function showResult(data) {
+        const d = data.data;
+        const isImage = d.media_type === 'image';
+        document.getElementById('resultPanel').classList.add('show','fade-in');
+        let mediaHtml = '';
+        if (d.result_file_url) {
+            mediaHtml = isImage
+                ? `<img src="${d.result_file_url}" style="width:100%;border-radius:8px;margin-bottom:16px">`
+                : `<video src="${d.result_file_url}" controls style="width:100%;border-radius:8px;margin-bottom:16px"></video>`;
+        }
+        const alertBtn = d.pothole_detected
+            ? `<button class="btn btn-danger" onclick="sendAlert()" id="alertBtn">📨 Send Alert to Municipality</button>`
+            : `<button class="btn btn-outline" disabled>✅ No Alert Needed</button>`;
+
+        document.getElementById('resultContent').innerHTML = `
+            ${mediaHtml}
+            <div id="alertMsg"></div>
+            <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap">
+                ${d.pothole_detected
+                    ? `<span class="badge badge-red">⚠️ ${d.pothole_count} Pothole${d.pothole_count!==1?'s':''} Detected</span>`
+                    : `<span class="badge badge-green">✅ No Potholes Found</span>`}
+                ${d.alert_sent ? `<span class="badge badge-yellow">📨 Alert Sent</span>` : ''}
+            </div>
+            <div style="margin-bottom:16px">
+                <div class="meta-row"><span class="meta-key">Record ID</span><span class="meta-val" style="font-family:var(--mono)">#${d.id}</span></div>
+                <div class="meta-row"><span class="meta-key">Media Type</span><span class="meta-val">${d.media_type}</span></div>
+                <div class="meta-row"><span class="meta-key">Processing Time</span><span class="meta-val" style="font-family:var(--mono)">${d.processing_time_ms ? d.processing_time_ms.toFixed(0)+' ms' : '—'}</span></div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+                ${alertBtn}
+                <a href="/history/${d.id}/" class="btn btn-outline">View Details →</a>
+            </div>`;
+    }
+
+    async function sendAlert() {
+        const btn = document.getElementById('alertBtn');
+        btn.disabled = true; btn.textContent = '⏳ Sending...';
+        const res  = await fetch('/api/alert/send/', { method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':getCsrf()}, body:JSON.stringify({detection_id:currentRecordId}) });
+        const data = await res.json();
+        if (data.success) {
+            document.getElementById('alertMsg').innerHTML = `<div class="alert alert-success">✅ ${data.message}</div>`;
+            btn.textContent = '✅ Alert Sent';
+        } else {
+            document.getElementById('alertMsg').innerHTML = `<div class="alert alert-error">❌ ${data.error}</div>`;
+            btn.disabled = false; btn.textContent = '📨 Retry Alert';
+        }
+    }
+
+    function showError(msg) {
+        document.getElementById('resultPanel').classList.add('show','fade-in');
+        document.getElementById('resultContent').innerHTML = `<div class="alert alert-error">❌ ${msg}</div>`;
+    }
+
+    let progressInterval;
+    function animateProgress() {
+        let w = 0;
+        const fill = document.getElementById('progressFill');
+        progressInterval = setInterval(() => { if (w < 85) { w += Math.random()*8; fill.style.width = Math.min(w,85)+'%'; } }, 300);
+    }
+    function stopProgress() { clearInterval(progressInterval); document.getElementById('progressFill').style.width='100%'; }
+    function getCsrf() { return document.cookie.split(';').find(c=>c.trim().startsWith('csrftoken='))?.split('=')[1]||''; }
+</script>
+{% endblock %}
