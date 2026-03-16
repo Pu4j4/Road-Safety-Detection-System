@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Virtual Environment
+venv/
+env/
+.venv/
+
+# Django
+*.log
+db.sqlite3
+db.sqlite3-journal
+
+# Media files
+media/
+
+# Static collected
+staticfiles/
+
+# ML Model weights (too large for GitHub)
+model/*.h5
+model/*.pt
+model/*.pth
+model/*.pb
+model/*.pkl
+
+# Secrets
+.env
+.env.local
+.env.production
+
+# PyCharm
+.idea/
+*.iml
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+*.ipynb_checkpoints/
