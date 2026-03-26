@@ -1,17 +1,17 @@
 import os
 import gdown
 
-LANE_MODEL_ID    = '128sv4hQNhqZoqqHbLS60xHpxqQxKqz-s'
-POTHOLE_MODEL_ID = '1EjE3HGr9AttSLCXnKnZnR74y35FmGlgg'
+LANE_MODEL_ID    = '1nsoLxwYR0kr41SfO-xcjKLaIJsJ6R2x1'  # lane_model.onnx
+POTHOLE_MODEL_ID = '1EjE3HGr9AttSLCXnKnZnR74y35FmGlgg'  # best.pt
 
 def download_models():
     os.makedirs('model', exist_ok=True)
 
-    if not os.path.exists('model/full_CNN_model.h5'):
-        print('⬇ Downloading lane model from Google Drive...')
+    if not os.path.exists('model/lane_model.onnx'):
+        print('⬇ Downloading lane model (ONNX) from Google Drive...')
         gdown.download(
             id=LANE_MODEL_ID,
-            output='model/full_CNN_model.h5',
+            output='model/lane_model.onnx',
             quiet=False
         )
         print('✅ Lane model downloaded.')
