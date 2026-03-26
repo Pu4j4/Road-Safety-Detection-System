@@ -29,7 +29,7 @@ model/*.pt
 model/*.pth
 model/*.pb
 model/*.pkl
-
+model/*.onnx
 # Secrets
 .env
 .env.local
