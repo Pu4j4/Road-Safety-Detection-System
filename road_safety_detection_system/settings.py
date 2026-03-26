@@ -1,11 +1,12 @@
 import os
+import dj_database_url
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = 'django-insecure-change-this-in-production-use-env-variable'
+SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-this-in-production')
 
-DEBUG = True
+DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 
 ALLOWED_HOSTS = ['*']
 
@@ -24,6 +25,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -52,11 +54,14 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'road_safety_detection_system.wsgi.application'
 
+# ── Database ──────────────────────────────────────────────────────
+# Uses PostgreSQL on Railway (DATABASE_URL env var set automatically)
+# Falls back to SQLite locally
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    'default': dj_database_url.config(
+        default=f'sqlite:///{BASE_DIR / "db.sqlite3"}',
+        conn_max_age=600,
+    )
 }
 
 AUTH_PASSWORD_VALIDATORS = [
@@ -67,19 +72,23 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'Asia/Kolkata'
-USE_I18N = True
-USE_TZ = True
+TIME_ZONE     = 'Asia/Kolkata'
+USE_I18N      = True
+USE_TZ        = True
 
-STATIC_URL = '/static/'
+# ── Static Files ──────────────────────────────────────────────────
+STATIC_URL  = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_DIRS = []
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
-MEDIA_URL = '/media/'
+# ── Media Files ───────────────────────────────────────────────────
+MEDIA_URL  = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# ── Django REST Framework ─────────────────────────────────────────
 REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
@@ -95,16 +104,16 @@ REST_FRAMEWORK = {
 
 CORS_ALLOW_ALL_ORIGINS = True
 
-# Twilio
-TWILIO_SID = os.environ.get('TWILIO_SID', '')
-TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '')
+# ── Twilio ────────────────────────────────────────────────────────
+TWILIO_SID          = os.environ.get('TWILIO_SID', '')
+TWILIO_AUTH_TOKEN   = os.environ.get('TWILIO_AUTH_TOKEN', '')
 TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '')
-MUNICIPALITY_PHONE = os.environ.get('MUNICIPALITY_PHONE', '')
+MUNICIPALITY_PHONE  = os.environ.get('MUNICIPALITY_PHONE', '')
 
-# ML Model paths
-LANE_MODEL_PATH = BASE_DIR / 'model' / 'full_CNN_model.h5'
+# ── ML Model Paths ────────────────────────────────────────────────
+LANE_MODEL_PATH    = BASE_DIR / 'model' / 'full_CNN_model.h5'
 POTHOLE_MODEL_PATH = BASE_DIR / 'model' / 'best.pt'
 
-# File upload limits (100 MB)
+# ── File Upload Limits (100MB) ────────────────────────────────────
 DATA_UPLOAD_MAX_MEMORY_SIZE = 104857600
 FILE_UPLOAD_MAX_MEMORY_SIZE = 104857600
