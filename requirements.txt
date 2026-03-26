@@ -5,8 +5,7 @@ Pillow>=10.0
 numpy>=1.24
 opencv-python-headless>=4.8
 scikit-image>=0.21
-tensorflow>=2.13
-tf_keras
+onnxruntime>=1.17
 ultralytics>=8.0
 twilio>=8.0
 gunicorn>=21.0
