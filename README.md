@@ -324,7 +324,7 @@ This project was originally built with Streamlit on Google Colab and migrated to
 
 ## 👨‍💻 Author
 
-**Azad** — [@Pu4j4](https://github.com/Pu4j4)
+**Bhanupooja Bethala** — [@Pu4j4](https://github.com/Pu4j4)
 
 ---
 
