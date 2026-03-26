@@ -6,10 +6,6 @@ import logging
 from PIL import Image, ImageDraw
 from skimage.transform import resize as sk_resize
 
-# Suppress TF noise
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-
 logger = logging.getLogger(__name__)
 
 _lane_model    = None
@@ -28,14 +24,17 @@ _lane_state = LaneState()
 
 
 def _load_lane_model(model_path):
-    """Load .h5 lane model using tf_keras (compatible with TF 2.16+ / Keras 3.x)."""
+    """Load lane model using ONNX Runtime — lightweight, no TensorFlow needed."""
     try:
-        import tf_keras
-        model = tf_keras.models.load_model(model_path, compile=False)
-        logger.info("✅ Lane CNN model loaded via tf_keras.")
-        return model
+        import onnxruntime as ort
+        session = ort.InferenceSession(
+            model_path,
+            providers=['CPUExecutionProvider']
+        )
+        logger.info("✅ Lane ONNX model loaded via onnxruntime.")
+        return session
     except Exception as e:
-        logger.error(f"❌ Lane model load failed: {e}")
+        logger.error(f"❌ Lane ONNX model load failed: {e}")
         return None
 
 
@@ -77,14 +76,22 @@ def get_pothole_model():
 # ── Lane Detection ────────────────────────────────────────────────
 
 def _process_lane_frame(frame):
-    model = get_lane_model()
-    if model is None:
+    session = get_lane_model()
+    if session is None:
         raise RuntimeError("Lane model not loaded.")
 
-    small = sk_resize(frame, (MODEL_INPUT_SIZE[1], MODEL_INPUT_SIZE[0], 3),
-                      preserve_range=True, anti_aliasing=True).astype(np.uint8)
+    # Prepare input
+    small = sk_resize(
+        frame,
+        (MODEL_INPUT_SIZE[1], MODEL_INPUT_SIZE[0], 3),
+        preserve_range=True,
+        anti_aliasing=True
+    ).astype(np.float32)
     small = small[None, :, :, :]
-    prediction = model.predict(small, verbose=0)[0] * 255
+
+    # Run ONNX inference
+    input_name  = session.get_inputs()[0].name
+    prediction  = session.run(None, {input_name: small})[0][0] * 255
 
     _lane_state.recent_fit.append(prediction)
     if len(_lane_state.recent_fit) > 5:
@@ -93,8 +100,10 @@ def _process_lane_frame(frame):
     _lane_state.avg_fit = np.mean(np.array(_lane_state.recent_fit), axis=0)
     blanks     = np.zeros_like(_lane_state.avg_fit).astype(np.uint8)
     lane_drawn = np.dstack((blanks, _lane_state.avg_fit.astype(np.uint8), blanks))
-    lane_image = sk_resize(lane_drawn, frame.shape, preserve_range=True,
-                           anti_aliasing=True).astype(np.uint8)
+    lane_image = sk_resize(
+        lane_drawn, frame.shape,
+        preserve_range=True, anti_aliasing=True
+    ).astype(np.uint8)
     return cv2.addWeighted(frame, 1, lane_image, 1, 0)
 
 
