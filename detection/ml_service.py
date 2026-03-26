@@ -23,40 +23,33 @@ class LaneState:
 _lane_state = LaneState()
 
 
-def _load_lane_model(model_path):
-    """Load lane model using ONNX Runtime — lightweight, no TensorFlow needed."""
+def _load_onnx_model(model_path, name):
+    """Load any ONNX model using onnxruntime."""
     try:
         import onnxruntime as ort
         session = ort.InferenceSession(
             model_path,
             providers=['CPUExecutionProvider']
         )
-        logger.info("✅ Lane ONNX model loaded via onnxruntime.")
+        logger.info(f"✅ {name} ONNX model loaded.")
         return session
     except Exception as e:
-        logger.error(f"❌ Lane ONNX model load failed: {e}")
+        logger.error(f"❌ {name} ONNX model failed: {e}")
         return None
 
 
 def load_models():
     global _lane_model, _pothole_model
     from django.conf import settings
-
-    _lane_model = _load_lane_model(str(settings.LANE_MODEL_PATH))
-
-    try:
-        from ultralytics import YOLO
-        _pothole_model = YOLO(str(settings.POTHOLE_MODEL_PATH))
-        logger.info("✅ Pothole YOLOv8 model loaded.")
-    except Exception as e:
-        logger.error(f"❌ Pothole model failed: {e}")
+    _lane_model    = _load_onnx_model(str(settings.LANE_MODEL_PATH),    'Lane')
+    _pothole_model = _load_onnx_model(str(settings.POTHOLE_MODEL_PATH), 'Pothole')
 
 
 def get_lane_model():
     global _lane_model
     if _lane_model is None:
         from django.conf import settings
-        _lane_model = _load_lane_model(str(settings.LANE_MODEL_PATH))
+        _lane_model = _load_onnx_model(str(settings.LANE_MODEL_PATH), 'Lane')
     return _lane_model
 
 
@@ -64,12 +57,7 @@ def get_pothole_model():
     global _pothole_model
     if _pothole_model is None:
         from django.conf import settings
-        try:
-            from ultralytics import YOLO
-            _pothole_model = YOLO(str(settings.POTHOLE_MODEL_PATH))
-            logger.info("✅ Pothole YOLOv8 model lazy-loaded.")
-        except Exception as e:
-            logger.error(f"❌ Pothole model lazy-load failed: {e}")
+        _pothole_model = _load_onnx_model(str(settings.POTHOLE_MODEL_PATH), 'Pothole')
     return _pothole_model
 
 
@@ -80,18 +68,14 @@ def _process_lane_frame(frame):
     if session is None:
         raise RuntimeError("Lane model not loaded.")
 
-    # Prepare input
     small = sk_resize(
-        frame,
-        (MODEL_INPUT_SIZE[1], MODEL_INPUT_SIZE[0], 3),
-        preserve_range=True,
-        anti_aliasing=True
+        frame, (MODEL_INPUT_SIZE[1], MODEL_INPUT_SIZE[0], 3),
+        preserve_range=True, anti_aliasing=True
     ).astype(np.float32)
     small = small[None, :, :, :]
 
-    # Run ONNX inference
-    input_name  = session.get_inputs()[0].name
-    prediction  = session.run(None, {input_name: small})[0][0] * 255
+    input_name = session.get_inputs()[0].name
+    prediction = session.run(None, {input_name: small})[0][0] * 255
 
     _lane_state.recent_fit.append(prediction)
     if len(_lane_state.recent_fit) > 5:
@@ -145,26 +129,55 @@ def detect_lanes_video(input_path, output_path):
 
 # ── Pothole Detection ─────────────────────────────────────────────
 
+def _run_pothole_onnx(session, img_pil):
+    """Run ONNX pothole model on a PIL image, return boxes and scores."""
+    orig_w, orig_h = img_pil.size
+
+    # Resize to model input size
+    img_resized = img_pil.resize((640, 640))
+    img_array   = np.array(img_resized).astype(np.float32) / 255.0
+    img_array   = img_array.transpose(2, 0, 1)[None, :, :, :]  # NCHW
+
+    input_name = session.get_inputs()[0].name
+    outputs    = session.run(None, {input_name: img_array})[0]  # shape: (1, 5, 8400)
+
+    # Parse YOLO output
+    predictions = outputs[0].T  # (8400, 5) → x,y,w,h,conf
+    boxes, scores = [], []
+
+    for pred in predictions:
+        x, y, w, h = pred[:4]
+        conf        = float(pred[4])
+        if conf < 0.25:
+            continue
+        # Convert from 640x640 back to original size
+        x1 = int((x - w / 2) * orig_w / 640)
+        y1 = int((y - h / 2) * orig_h / 640)
+        x2 = int((x + w / 2) * orig_w / 640)
+        y2 = int((y + h / 2) * orig_h / 640)
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(orig_w, x2), min(orig_h, y2)
+        boxes.append([x1, y1, x2, y2])
+        scores.append(round(conf, 3))
+
+    return boxes, scores
+
+
 def detect_potholes_image(input_path, output_path):
-    model = get_pothole_model()
-    if model is None:
+    session = get_pothole_model()
+    if session is None:
         raise RuntimeError("Pothole model not loaded.")
 
     start  = time.time()
     img    = Image.open(input_path).convert("RGB")
-    pred   = model(img)
-    draw   = ImageDraw.Draw(img)
-    boxes  = pred[0].boxes.xyxy.tolist()
-    scores = pred[0].boxes.conf.tolist() if pred[0].boxes.conf is not None else []
+    boxes, scores = _run_pothole_onnx(session, img)
 
+    draw = ImageDraw.Draw(img)
     detections = []
-    for i, box in enumerate(boxes):
-        x1, y1, x2, y2 = map(int, box)
+    for i, (box, score) in enumerate(zip(boxes, scores)):
+        x1, y1, x2, y2 = box
         draw.rectangle((x1, y1, x2, y2), outline="red", width=3)
-        detections.append({
-            'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
-            'confidence': round(scores[i], 3) if i < len(scores) else None,
-        })
+        detections.append({'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2, 'confidence': score})
     img.save(output_path)
 
     return {
@@ -176,8 +189,8 @@ def detect_potholes_image(input_path, output_path):
 
 
 def detect_potholes_video(input_path, output_path):
-    model = get_pothole_model()
-    if model is None:
+    session = get_pothole_model()
+    if session is None:
         raise RuntimeError("Pothole model not loaded.")
 
     start  = time.time()
@@ -200,12 +213,11 @@ def detect_potholes_video(input_path, output_path):
             ret, frame = cap.read()
             if not ret:
                 break
-            img_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            pred    = model(img_pil)
-            draw    = ImageDraw.Draw(img_pil)
-            boxes   = pred[0].boxes.xyxy.tolist()
+            img_pil       = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            boxes, scores = _run_pothole_onnx(session, img_pil)
+            draw          = ImageDraw.Draw(img_pil)
             for box in boxes:
-                x1, y1, x2, y2 = map(int, box)
+                x1, y1, x2, y2 = box
                 draw.rectangle((x1, y1, x2, y2), outline="red", width=3)
             if boxes:
                 pothole_found   = True
