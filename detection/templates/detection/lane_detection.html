@@ -45,26 +45,6 @@
     </div>
 </div>
 
-<div class="card" style="margin-top:24px">
-    <div class="card-title">Model Information</div>
-    <div class="grid-3">
-        <div style="padding:16px;background:var(--surface2);border-radius:8px">
-            <div style="font-size:11px;font-family:var(--mono);color:var(--text-muted);margin-bottom:4px">ARCHITECTURE</div>
-            <div style="font-weight:700">Full CNN</div>
-            <div style="font-size:13px;color:var(--text-muted)">Convolutional Neural Network trained on lane datasets</div>
-        </div>
-        <div style="padding:16px;background:var(--surface2);border-radius:8px">
-            <div style="font-size:11px;font-family:var(--mono);color:var(--text-muted);margin-bottom:4px">INPUT SIZE</div>
-            <div style="font-weight:700">160 × 80 px</div>
-            <div style="font-size:13px;color:var(--text-muted)">Frames resized for model, output at 1280×720</div>
-        </div>
-        <div style="padding:16px;background:var(--surface2);border-radius:8px">
-            <div style="font-size:11px;font-family:var(--mono);color:var(--text-muted);margin-bottom:4px">SMOOTHING</div>
-            <div style="font-weight:700">5-Frame Average</div>
-            <div style="font-size:13px;color:var(--text-muted)">Rolling average over 5 frames for stable lane lines</div>
-        </div>
-    </div>
-</div>
 {% endblock %}
 
 {% block extra_js %}
