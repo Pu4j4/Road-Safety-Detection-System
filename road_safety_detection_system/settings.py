@@ -111,7 +111,7 @@ TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '')
 MUNICIPALITY_PHONE  = os.environ.get('MUNICIPALITY_PHONE', '')
 
 # ── ML Model Paths ────────────────────────────────────────────────
-LANE_MODEL_PATH    = BASE_DIR / 'model' / 'full_CNN_model.h5'
+LANE_MODEL_PATH    = BASE_DIR / 'model' / 'lane_model.onnx'
 POTHOLE_MODEL_PATH = BASE_DIR / 'model' / 'best.pt'
 
 # ── File Upload Limits (100MB) ────────────────────────────────────
