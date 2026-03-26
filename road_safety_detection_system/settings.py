@@ -112,7 +112,7 @@ MUNICIPALITY_PHONE  = os.environ.get('MUNICIPALITY_PHONE', '')
 
 # ── ML Model Paths ────────────────────────────────────────────────
 LANE_MODEL_PATH    = BASE_DIR / 'model' / 'lane_model.onnx'
-POTHOLE_MODEL_PATH = BASE_DIR / 'model' / 'best.pt'
+POTHOLE_MODEL_PATH = BASE_DIR / 'model' / 'best.onnx'
 
 # ── File Upload Limits (100MB) ────────────────────────────────────
 DATA_UPLOAD_MAX_MEMORY_SIZE = 104857600
